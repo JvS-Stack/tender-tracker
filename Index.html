@@ -7,6 +7,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1e293b; }
@@ -61,24 +62,25 @@
       return JSON.parse(text);
     };
 
-    // ── PDF text extraction ───────────────────────────────────────────────────
-    const readPDFAsText = (file) => new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        // Extract readable text from PDF binary
-        const arr = new Uint8Array(e.target.result);
-        let text = "";
-        for (let i = 0; i < arr.length; i++) {
-          if (arr[i] > 31 && arr[i] < 127) text += String.fromCharCode(arr[i]);
-          else if (arr[i] === 10 || arr[i] === 13) text += " ";
+    // ── PDF text extraction using PDF.js ─────────────────────────────────────
+    const readPDFAsText = async (file) => {
+      try {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          const pageText = content.items.map(item => item.str).join(" ");
+          fullText += pageText + "\n";
         }
-        // Clean up and extract meaningful text
-        text = text.replace(/[^\x20-\x7E\s]/g, " ").replace(/\s+/g, " ").trim();
-        resolve(text.substring(0, 8000));
-      };
-      reader.onerror = () => resolve("");
-      reader.readAsArrayBuffer(file);
-    });
+        return fullText.substring(0, 8000);
+      } catch (e) {
+        console.warn("PDF read error:", e);
+        return "";
+      }
+    };
 
     // ── Similarity ────────────────────────────────────────────────────────────
     const isSimilar = (a, b) => {
