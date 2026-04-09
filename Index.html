@@ -7,10 +7,10 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet" />
   <style>
-    body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1e293b; }
+    input, select, textarea, button { font-family: inherit; }
   </style>
 </head>
 <body>
@@ -18,7 +18,6 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // ── Config ────────────────────────────────────────────────────────────────
     const APP_PASSWORD = "#TenderResults";
     const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxDo9b-UXfBmNZn0vE1OmVSNlWNWAYqeXiI1DoWBfvfXsQbciX0zFRsG0GrkUcZGdUYeg/exec";
     const SECRET_KEY = "tendertracker2026";
@@ -56,6 +55,25 @@
       return res.json();
     };
 
+    // ── PDF text extraction ───────────────────────────────────────────────────
+    const readPDFAsText = (file) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        // Extract readable text from PDF binary
+        const arr = new Uint8Array(e.target.result);
+        let text = "";
+        for (let i = 0; i < arr.length; i++) {
+          if (arr[i] > 31 && arr[i] < 127) text += String.fromCharCode(arr[i]);
+          else if (arr[i] === 10 || arr[i] === 13) text += " ";
+        }
+        // Clean up and extract meaningful text
+        text = text.replace(/[^\x20-\x7E\s]/g, " ").replace(/\s+/g, " ").trim();
+        resolve(text.substring(0, 8000));
+      };
+      reader.onerror = () => resolve("");
+      reader.readAsArrayBuffer(file);
+    });
+
     // ── Similarity ────────────────────────────────────────────────────────────
     const isSimilar = (a, b) => {
       if (!a || !b) return false;
@@ -68,22 +86,22 @@
       return shared >= 2 || (words(b).length <= 3 && shared >= 1);
     };
 
-    const findSimilar = (extracted, tenders) => {
-      const pt = extracted["Project Title"] || "";
-      const proc = extracted["Tender / Procedure Title"] || "";
-      const pnum = extracted["Project Number"] || "";
-      return tenders.find(t =>
-        (pnum && t["Project Number"] && pnum === t["Project Number"]) ||
-        isSimilar(proc, t["Tender / Procedure Title"]) ||
-        isSimilar(pt, t["Project Title"]) ||
-        isSimilar(proc, t["Project Title"])
-      ) || null;
-    };
+    const findSimilar = (extracted, tenders) => tenders.find(t =>
+      (extracted["Project Number"] && t["Project Number"] && extracted["Project Number"] === t["Project Number"]) ||
+      isSimilar(extracted["Tender / Procedure Title"], t["Tender / Procedure Title"]) ||
+      isSimilar(extracted["Project Title"], t["Project Title"]) ||
+      isSimilar(extracted["Tender / Procedure Title"], t["Project Title"])
+    ) || null;
 
     // ── Small UI ──────────────────────────────────────────────────────────────
+    const s = (style) => Object.fromEntries(style.split(";").filter(Boolean).map(p => {
+      const [k, ...v] = p.split(":");
+      return [k.trim().replace(/-([a-z])/g, (_, l) => l.toUpperCase()), v.join(":").trim()];
+    }));
+
     function Badge({ label, map }) {
       const style = (map && map[label]) || "background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0";
-      return <span style={{display:"inline-flex",alignItems:"center",padding:"2px 10px",borderRadius:"9999px",fontSize:"12px",fontWeight:500,...Object.fromEntries(style.split(";").filter(Boolean).map(s => { const [k,...v]=s.split(":"); return [k.trim().replace(/-([a-z])/g,(_,l)=>l.toUpperCase()),v.join(":").trim()]; }))}}>{label||"—"}</span>;
+      return <span style={{display:"inline-flex",alignItems:"center",padding:"2px 10px",borderRadius:"9999px",fontSize:"12px",fontWeight:500,...s(style)}}>{label||"—"}</span>;
     }
 
     function Modal({ title, children, onClose }) {
@@ -92,7 +110,7 @@
           <div style={{background:"white",borderRadius:"16px",boxShadow:"0 20px 60px rgba(0,0,0,0.15)",width:"100%",maxWidth:"640px",maxHeight:"90vh",overflowY:"auto",border:"1px solid #f1f5f9"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 24px",borderBottom:"1px solid #f1f5f9"}}>
               <h2 style={{fontSize:"14px",fontWeight:600,color:"#334155"}}>{title}</h2>
-              {onClose && <button onClick={onClose} style={{color:"#cbd5e1",fontSize:"22px",background:"none",border:"none",cursor:"pointer",lineHeight:1}}>&times;</button>}
+              {onClose && <button onClick={onClose} style={{color:"#cbd5e1",fontSize:"22px",background:"none",border:"none",cursor:"pointer"}}>&times;</button>}
             </div>
             <div style={{padding:"20px 24px"}}>{children}</div>
           </div>
@@ -100,7 +118,7 @@
       );
     }
 
-    function Btn({ children, onClick, disabled, variant="primary", style={} }) {
+    function Btn({ children, onClick, disabled, variant="primary", fullWidth=false }) {
       const variants = {
         primary: {background:"#6366f1",color:"white",border:"none"},
         ghost:   {background:"white",color:"#475569",border:"1px solid #e2e8f0"},
@@ -109,7 +127,7 @@
         emerald: {background:"#ecfdf5",color:"#065f46",border:"1px solid #a7f3d0"},
       };
       return (
-        <button onClick={onClick} disabled={disabled} style={{padding:"8px 16px",borderRadius:"8px",fontSize:"13px",fontWeight:500,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.4:1,transition:"all 0.15s",...variants[variant],...style}}>
+        <button onClick={onClick} disabled={disabled} style={{padding:"8px 16px",borderRadius:"8px",fontSize:"13px",fontWeight:500,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.4:1,width:fullWidth?"100%":"auto",...variants[variant]}}>
           {children}
         </button>
       );
@@ -119,18 +137,20 @@
     function Login({ onLogin }) {
       const [pw, setPw] = useState("");
       const [err, setErr] = useState(false);
-      const submit = () => { if (pw === APP_PASSWORD) { onLogin(); } else { setErr(true); setTimeout(() => setErr(false), 2000); } };
+      const submit = () => {
+        if (pw === APP_PASSWORD) { onLogin(); }
+        else { setErr(true); setTimeout(() => setErr(false), 2000); }
+      };
       return (
         <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f8fafc"}}>
-          <div style={{background:"white",borderRadius:"20px",padding:"40px",boxShadow:"0 4px 24px rgba(0,0,0,0.08)",width:"100%",maxWidth:"360px",border:"1px solid #f1f5f9",textAlign:"center"}}>
+          <div style={{background:"white",borderRadius:"20px",padding:"40px",boxShadow:"0 4px 24px rgba(0,0,0,0.08)",width:"100%",maxWidth:"360px",textAlign:"center",border:"1px solid #f1f5f9"}}>
             <div style={{width:48,height:48,background:"#6366f1",borderRadius:"12px",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:"22px"}}>📋</div>
             <h1 style={{fontSize:"20px",fontWeight:700,color:"#1e293b",marginBottom:4}}>Tender Tracker</h1>
-            <p style={{fontSize:"13px",color:"#94a3b8",marginBottom:24}}>Team access — enter password to continue</p>
-            <input
-              type="password" placeholder="Password" value={pw}
+            <p style={{fontSize:"13px",color:"#94a3b8",marginBottom:24}}>Enter password to continue</p>
+            <input type="password" placeholder="Password" value={pw}
               onChange={e => setPw(e.target.value)}
               onKeyDown={e => e.key === "Enter" && submit()}
-              style={{width:"100%",border:`1px solid ${err?"#fca5a5":"#e2e8f0"}`,borderRadius:"8px",padding:"10px 14px",fontSize:"14px",outline:"none",marginBottom:"12px",boxSizing:"border-box",background:err?"#fff1f2":"#f8fafc"}}
+              style={{width:"100%",border:`1px solid ${err?"#fca5a5":"#e2e8f0"}`,borderRadius:"8px",padding:"10px 14px",fontSize:"14px",outline:"none",marginBottom:"12px",background:err?"#fff1f2":"#f8fafc"}}
             />
             {err && <p style={{color:"#ef4444",fontSize:"12px",marginBottom:"12px"}}>Incorrect password</p>}
             <button onClick={submit} style={{width:"100%",background:"#6366f1",color:"white",border:"none",borderRadius:"8px",padding:"10px",fontSize:"14px",fontWeight:600,cursor:"pointer"}}>Enter</button>
@@ -145,22 +165,18 @@
         <Modal title="🔍 Similar Record Found">
           <p style={{fontSize:"13px",color:"#64748b",marginBottom:"16px"}}>The uploaded document looks similar to an existing record. Is this the same project?</p>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"20px"}}>
-            <div style={{background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:"12px",padding:"16px"}}>
-              <div style={{fontSize:"11px",fontWeight:600,color:"#0369a1",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:"8px"}}>Uploaded</div>
-              <div style={{fontSize:"13px",fontWeight:600,color:"#1e293b"}}>{extracted["Project Title"] || "—"}</div>
-              {extracted["Tender / Procedure Title"] && extracted["Tender / Procedure Title"] !== extracted["Project Title"] && <div style={{fontSize:"12px",color:"#6366f1",marginTop:"4px"}}>{extracted["Tender / Procedure Title"]}</div>}
-              {extracted["Project Number"] && <div style={{fontSize:"11px",color:"#94a3b8",marginTop:"4px"}}>#{extracted["Project Number"]}</div>}
-            </div>
-            <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"12px",padding:"16px"}}>
-              <div style={{fontSize:"11px",fontWeight:600,color:"#d97706",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:"8px"}}>Existing · {match["Tender ID"]}</div>
-              <div style={{fontSize:"13px",fontWeight:600,color:"#1e293b"}}>{match["Project Title"] || "—"}</div>
-              {match["Tender / Procedure Title"] && match["Tender / Procedure Title"] !== match["Project Title"] && <div style={{fontSize:"12px",color:"#6366f1",marginTop:"4px"}}>{match["Tender / Procedure Title"]}</div>}
-              {match["Project Number"] && <div style={{fontSize:"11px",color:"#94a3b8",marginTop:"4px"}}>#{match["Project Number"]}</div>}
-            </div>
+            {[["Uploaded","#f0f9ff","1px solid #bae6fd","#0369a1",extracted],["Existing · "+match["Tender ID"],"#fffbeb","1px solid #fde68a","#d97706",match]].map(([label,bg,border,color,data]) => (
+              <div key={label} style={{background:bg,border,borderRadius:"12px",padding:"16px"}}>
+                <div style={{fontSize:"11px",fontWeight:600,color,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:"8px"}}>{label}</div>
+                <div style={{fontSize:"13px",fontWeight:600,color:"#1e293b"}}>{data["Project Title"]||"—"}</div>
+                {data["Tender / Procedure Title"] && data["Tender / Procedure Title"] !== data["Project Title"] && <div style={{fontSize:"12px",color:"#6366f1",marginTop:"4px"}}>{data["Tender / Procedure Title"]}</div>}
+                {data["Project Number"] && <div style={{fontSize:"11px",color:"#94a3b8",marginTop:"4px"}}>#{data["Project Number"]}</div>}
+              </div>
+            ))}
           </div>
           <div style={{display:"flex",gap:"12px"}}>
-            <Btn variant="emerald" onClick={onConfirm} style={{flex:1}}>✓ Yes — merge into existing</Btn>
-            <Btn variant="ghost" onClick={onReject} style={{flex:1}}>✕ No — create new record</Btn>
+            <Btn variant="emerald" onClick={onConfirm} fullWidth>✓ Yes — merge into existing</Btn>
+            <Btn variant="ghost" onClick={onReject} fullWidth>✕ No — create new record</Btn>
           </div>
         </Modal>
       );
@@ -177,61 +193,49 @@
       const [confirmDelete, setConfirmDelete] = useState(false);
       const fileRef = useRef();
 
-      const readFileAsBase64 = (f) => new Promise((res, rej) => {
-        const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(f);
-      });
-
       const handleExtraDocs = async () => {
         if (!extraFiles.length) return;
         setLoading(true); setMsg(null);
         try {
-          const docBlocks = await Promise.all(extraFiles.map(async f => ({ type:"document", source:{type:"base64",media_type:"application/pdf",data:await readFileAsBase64(f)} })));
-          const res = await fetch("https://api.anthropic.com/v1/messages", {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000,
-              system:`Merge supplementary docs into existing tender record. Only overwrite if new value is more complete. Never overwrite with null/empty. Return ONLY valid JSON with fields: ${FIELDS.join(", ")}`,
-              messages:[{role:"user",content:[...docBlocks,{type:"text",text:`Existing:\n${JSON.stringify(data,null,2)}\n\nMerge and return updated JSON.`}]}]
-            })
+          const texts = await Promise.all(extraFiles.map(f => readPDFAsText(f)));
+          const combined = texts.join("\n\n");
+          const existing = JSON.stringify(data);
+          const result = await callScript({
+            action: "extract",
+            text: `Existing record: ${existing}\n\nNew documents:\n${combined}\n\nMerge new info into the existing record. Only fill empty fields or improve incomplete ones.`,
+            isResult: "false"
           });
-          if (!res.ok) throw new Error(`API error: ${res.status}`);
-          const d = await res.json();
-          const text = d.content?.find(b => b.type==="text")?.text || "{}";
-          const merged = {...data,...JSON.parse(text.replace(/```json|```/g,"").trim()),"Tender ID":data["Tender ID"]};
+          if (result.error) throw new Error(result.error);
+          const merged = { ...data, ...result.extracted, "Tender ID": data["Tender ID"] };
           setData(merged); await onUpdate(merged);
           setExtraFiles([]); setAddingDocs(false);
-          setMsg({type:"success",text:"✓ Record updated."});
-        } catch(e) { setMsg({type:"error",text:`Error: ${e.message}`}); }
+          setMsg({ type: "success", text: "✓ Record updated with new document data." });
+        } catch (e) { setMsg({ type: "error", text: `Error: ${e.message}` }); }
         setLoading(false);
       };
 
-      const proj = data["Project Title"];
-      const proc = data["Tender / Procedure Title"];
-
-      const inputStyle = {border:"1px solid #e2e8f0",borderRadius:"8px",padding:"6px 12px",fontSize:"13px",color:"#334155",width:"100%",background:"#f8fafc",outline:"none",boxSizing:"border-box"};
-      const selectStyle = {...inputStyle};
+      const inp = {border:"1px solid #e2e8f0",borderRadius:"8px",padding:"6px 12px",fontSize:"13px",color:"#334155",width:"100%",background:"#f8fafc",outline:"none"};
 
       return (
         <Modal title="Tender Detail" onClose={onClose}>
           {msg && <div style={{marginBottom:16,padding:"8px 12px",borderRadius:"8px",fontSize:"13px",background:msg.type==="success"?"#ecfdf5":"#fff1f2",color:msg.type==="success"?"#065f46":"#be123c",border:`1px solid ${msg.type==="success"?"#a7f3d0":"#fecdd3"}`}}>{msg.text}</div>}
-
           {!editing && (
             <div style={{marginBottom:20,paddingBottom:20,borderBottom:"1px solid #f1f5f9"}}>
-              <div style={{fontSize:"16px",fontWeight:700,color:"#1e293b"}}>{proj || <span style={{color:"#cbd5e1"}}>No project title</span>}</div>
-              {proc && proc !== proj && <div style={{fontSize:"13px",color:"#6366f1",marginTop:4}}>{proc}</div>}
+              <div style={{fontSize:"16px",fontWeight:700,color:"#1e293b"}}>{data["Project Title"]||<span style={{color:"#cbd5e1"}}>No project title</span>}</div>
+              {data["Tender / Procedure Title"] && data["Tender / Procedure Title"] !== data["Project Title"] && <div style={{fontSize:"13px",color:"#6366f1",marginTop:4}}>{data["Tender / Procedure Title"]}</div>}
               {data["Project Number"] && <div style={{fontSize:"12px",color:"#94a3b8",marginTop:4}}>#{data["Project Number"]}</div>}
             </div>
           )}
-
           <div style={{display:"grid",gap:"12px",marginBottom:20}}>
             {FIELDS.filter(f => f !== "Tender ID").map(f => (
               <div key={f}>
                 <div style={{fontSize:"11px",fontWeight:600,color:"#94a3b8",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{f}</div>
                 {editing
                   ? f === "Status"
-                    ? <select style={selectStyle} value={data[f]||""} onChange={e=>setData(p=>({...p,[f]:e.target.value}))}>{["Open","Closed","Awarded"].map(o=><option key={o}>{o}</option>)}</select>
+                    ? <select style={inp} value={data[f]||""} onChange={e=>setData(p=>({...p,[f]:e.target.value}))}>{["Open","Closed","Awarded"].map(o=><option key={o}>{o}</option>)}</select>
                     : f === "Our Bid Status"
-                    ? <select style={selectStyle} value={data[f]||""} onChange={e=>setData(p=>({...p,[f]:e.target.value}))}>{["Bidding","Not Bidding","Submitted","Won","Lost"].map(o=><option key={o}>{o}</option>)}</select>
-                    : <input style={inputStyle} value={data[f]||""} onChange={e=>setData(p=>({...p,[f]:e.target.value}))} />
+                    ? <select style={inp} value={data[f]||""} onChange={e=>setData(p=>({...p,[f]:e.target.value}))}>{["Bidding","Not Bidding","Submitted","Won","Lost"].map(o=><option key={o}>{o}</option>)}</select>
+                    : <input style={inp} value={data[f]||""} onChange={e=>setData(p=>({...p,[f]:e.target.value}))} />
                   : <div style={{fontSize:"13px",color:data[f]?"#334155":"#cbd5e1"}}>{data[f]||"—"}</div>
                 }
               </div>
@@ -240,26 +244,16 @@
 
           {addingDocs && (
             <div style={{marginBottom:16}}>
-              <div
-                onClick={() => fileRef.current?.click()}
-                onDragOver={e=>e.preventDefault()}
+              <div onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()}
                 onDrop={e=>{e.preventDefault();setExtraFiles(p=>[...p,...Array.from(e.dataTransfer.files).filter(f=>f.type==="application/pdf")]);}}
-                style={{border:"2px dashed #e2e8f0",borderRadius:"12px",padding:"24px",textAlign:"center",cursor:"pointer"}}
-              >
+                style={{border:"2px dashed #e2e8f0",borderRadius:"12px",padding:"24px",textAlign:"center",cursor:"pointer",marginBottom:8}}>
                 <input ref={fileRef} type="file" accept=".pdf" multiple style={{display:"none"}} onChange={e=>setExtraFiles(p=>[...p,...Array.from(e.target.files)])} />
                 {extraFiles.length > 0
-                  ? extraFiles.map((f,i) => (
-                      <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#eef2ff",borderRadius:"8px",padding:"8px 12px",marginBottom:4}}>
-                        <span style={{fontSize:"13px",color:"#6366f1"}}>📄 {f.name}</span>
-                        <button onClick={e=>{e.stopPropagation();setExtraFiles(p=>p.filter((_,j)=>j!==i));}} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:"18px"}}>&times;</button>
-                      </div>
-                    ))
+                  ? extraFiles.map((f,i) => <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#eef2ff",borderRadius:"8px",padding:"8px 12px",marginBottom:4}}><span style={{fontSize:"13px",color:"#6366f1"}}>📄 {f.name}</span><button onClick={e=>{e.stopPropagation();setExtraFiles(p=>p.filter((_,j)=>j!==i));}} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:"18px"}}>&times;</button></div>)
                   : <><div style={{fontSize:"24px",marginBottom:8}}>📎</div><div style={{fontSize:"13px",color:"#64748b"}}>Drop supplementary PDFs here</div></>
                 }
               </div>
-              <Btn onClick={handleExtraDocs} disabled={loading||!extraFiles.length} style={{width:"100%",marginTop:8}}>
-                {loading ? "⏳ Merging..." : "↗ Extract & Merge"}
-              </Btn>
+              <Btn onClick={handleExtraDocs} disabled={loading||!extraFiles.length} fullWidth>{loading?"⏳ Merging...":"↗ Extract & Merge"}</Btn>
             </div>
           )}
 
@@ -267,20 +261,20 @@
             <div style={{marginBottom:16,background:"#fff1f2",border:"1px solid #fecdd3",borderRadius:"12px",padding:"16px"}}>
               <p style={{fontSize:"13px",color:"#be123c",fontWeight:500,marginBottom:12}}>Are you sure you want to delete this tender?</p>
               <div style={{display:"flex",gap:8}}>
-                <Btn variant="danger" onClick={()=>onDelete(data["Tender ID"])} style={{flex:1}}>Yes, delete</Btn>
-                <Btn variant="ghost" onClick={()=>setConfirmDelete(false)} style={{flex:1}}>Cancel</Btn>
+                <Btn variant="danger" onClick={()=>onDelete(data["Tender ID"])} fullWidth>Yes, delete</Btn>
+                <Btn variant="ghost" onClick={()=>setConfirmDelete(false)} fullWidth>Cancel</Btn>
               </div>
             </div>
           )}
 
           <div style={{display:"flex",gap:8,flexWrap:"wrap",paddingTop:16,borderTop:"1px solid #f1f5f9"}}>
             {editing
-              ? <Btn onClick={()=>{onUpdate(data);setEditing(false);}} style={{flex:1}}>✓ Save</Btn>
-              : <Btn variant="ghost" onClick={()=>setEditing(true)} style={{flex:1}}>✏ Edit</Btn>
+              ? <Btn onClick={()=>{onUpdate(data);setEditing(false);}} fullWidth>✓ Save Changes</Btn>
+              : <Btn variant="ghost" onClick={()=>setEditing(true)}>✏ Edit</Btn>
             }
-            <Btn variant="purple" onClick={()=>{setAddingDocs(p=>!p);setConfirmDelete(false);}} style={{flex:1}}>{addingDocs?"✕ Cancel":"📎 Add Docs"}</Btn>
-            <Btn variant="danger" onClick={()=>{setConfirmDelete(p=>!p);setAddingDocs(false);}} style={{flex:1}}>🗑 Delete</Btn>
-            <Btn variant="ghost" onClick={onClose} style={{flex:1}}>Close</Btn>
+            <Btn variant="purple" onClick={()=>{setAddingDocs(p=>!p);setConfirmDelete(false);}}>{addingDocs?"✕ Cancel":"📎 Add Docs"}</Btn>
+            <Btn variant="danger" onClick={()=>{setConfirmDelete(p=>!p);setAddingDocs(false);}}>🗑 Delete</Btn>
+            <Btn variant="ghost" onClick={onClose}>Close</Btn>
           </div>
         </Modal>
       );
@@ -292,56 +286,40 @@
       const [inputTab, setInputTab] = useState("pdf");
       const [url, setUrl] = useState("");
       const [files, setFiles] = useState([]);
-      const [text, setText] = useState("");
+      const [pasteText, setPasteText] = useState("");
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       const fileRef = useRef();
 
-      const readFileAsBase64 = (f) => new Promise((res,rej) => { const r=new FileReader(); r.onload=()=>res(r.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(f); });
-
       const handleSubmit = async () => {
         setLoading(true); setError(null);
         try {
-          let extractedText = "";
+          let extractText = "";
 
-          if (inputTab==="pdf" && files.length>0) {
-            // Read all PDFs as text using FileReader
-            const texts = await Promise.all(files.map(f => new Promise((res, rej) => {
-              const r = new FileReader();
-              r.onload = () => res(`[Document: ${f.name}]\n${r.result}`);
-              r.onerror = rej;
-              r.readAsText(f);
-            })));
-            extractedText = texts.join("\n\n");
-            if (!extractedText.trim()) throw new Error("Could not read PDF text. Try the Paste Text option instead.");
-          } else if (inputTab==="url" && url) {
-            extractedText = `Extract tender data from this URL: ${url}`;
-          } else if (inputTab==="text" && text) {
-            extractedText = text;
+          if (inputTab === "pdf" && files.length > 0) {
+            const texts = await Promise.all(files.map(f => readPDFAsText(f)));
+            extractText = texts.map((t, i) => `[Document ${i+1}: ${files[i].name}]\n${t}`).join("\n\n");
+            if (!extractText.trim()) throw new Error("Could not read text from PDF. Please use the Paste Text option instead.");
+          } else if (inputTab === "url" && url) {
+            extractText = `Please extract all tender information from this URL: ${url}`;
+          } else if (inputTab === "text" && pasteText) {
+            extractText = pasteText;
           } else {
             setError("Please provide a PDF, URL, or paste text.");
             setLoading(false); return;
           }
 
-          // Route extraction through Apps Script to avoid CORS
-          const params = new URLSearchParams({
-            secret: SECRET_KEY,
+          const result = await callScript({
             action: "extract",
-            text: extractedText.substring(0, 8000), // limit size
+            text: extractText.substring(0, 8000),
             isResult: String(mode === "result")
           });
-          const res = await fetch(`${SCRIPT_URL}?${params.toString()}`);
-          if (!res.ok) throw new Error(`Script error: ${res.status}`);
-          const d = await res.json();
-          if (d.error) throw new Error(d.error);
-          onAdd(d.extracted, mode);
-        } catch(e) { setError(`Error: ${e.message}`); }
+
+          if (result.error) throw new Error(result.error);
+          onAdd(result.extracted, mode);
+        } catch (e) { setError(`Error: ${e.message}`); }
         setLoading(false);
       };
-
-      const tabBtn = (v, label) => (
-        <button key={v} onClick={()=>setInputTab(v)} style={{flex:1,padding:"6px",borderRadius:"6px",fontSize:"12px",fontWeight:500,border:"none",cursor:"pointer",background:inputTab===v?"white":"transparent",color:inputTab===v?"#334155":"#94a3b8",boxShadow:inputTab===v?"0 1px 3px rgba(0,0,0,0.1)":"none"}}>{label}</button>
-      );
 
       return (
         <Modal title="Add New Entry" onClose={onClose}>
@@ -351,25 +329,35 @@
             ))}
           </div>
           <div style={{display:"flex",gap:4,marginBottom:20,background:"#f1f5f9",borderRadius:"8px",padding:4}}>
-            {[["pdf","📎 PDF"],["url","🔗 URL"],["text","✏ Text"]].map(([v,l]) => tabBtn(v,l))}
+            {[["pdf","📎 PDF"],["url","🔗 URL"],["text","✏ Paste Text"]].map(([v,l]) => (
+              <button key={v} onClick={()=>setInputTab(v)} style={{flex:1,padding:"6px",borderRadius:"6px",fontSize:"12px",fontWeight:500,border:"none",cursor:"pointer",background:inputTab===v?"white":"transparent",color:inputTab===v?"#334155":"#94a3b8",boxShadow:inputTab===v?"0 1px 3px rgba(0,0,0,0.1)":"none"}}>{l}</button>
+            ))}
           </div>
 
-          {inputTab==="pdf" && (
-            <div onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();setFiles(p=>[...p,...Array.from(e.dataTransfer.files).filter(f=>f.type==="application/pdf")]);}}
+          {inputTab === "pdf" && (
+            <div onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()}
+              onDrop={e=>{e.preventDefault();setFiles(p=>[...p,...Array.from(e.dataTransfer.files).filter(f=>f.type==="application/pdf")]);}}
               style={{border:"2px dashed #e2e8f0",borderRadius:"12px",padding:"32px",textAlign:"center",cursor:"pointer",marginBottom:20,background:"#fafbff"}}>
               <input ref={fileRef} type="file" accept=".pdf" multiple style={{display:"none"}} onChange={e=>setFiles(p=>[...p,...Array.from(e.target.files)])} />
-              {files.length>0
+              {files.length > 0
                 ? <div>{files.map((f,i)=><div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#eef2ff",borderRadius:"8px",padding:"8px 12px",marginBottom:4}}><span style={{fontSize:"13px",color:"#6366f1"}}>📄 {f.name}</span><button onClick={e=>{e.stopPropagation();setFiles(p=>p.filter((_,j)=>j!==i));}} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:"18px"}}>&times;</button></div>)}<div style={{fontSize:"12px",color:"#94a3b8",marginTop:8}}>Drop more files here</div></div>
                 : <><div style={{fontSize:"32px",marginBottom:8}}>📎</div><div style={{fontSize:"13px",fontWeight:500,color:"#475569"}}>Drag & drop PDFs here</div><div style={{fontSize:"12px",color:"#94a3b8",marginTop:4}}>Upload TOR + supporting docs — AI merges all data</div></>
               }
             </div>
           )}
-          {inputTab==="url" && <div style={{marginBottom:20}}><input style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:"8px",padding:"10px 14px",fontSize:"13px",outline:"none",boxSizing:"border-box",background:"#f8fafc"}} placeholder="https://..." value={url} onChange={e=>setUrl(e.target.value)} /></div>}
-          {inputTab==="text" && <textarea style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:"8px",padding:"10px 14px",fontSize:"13px",outline:"none",height:160,resize:"none",marginBottom:20,boxSizing:"border-box",background:"#f8fafc"}} placeholder="Paste TOR or result text here..." value={text} onChange={e=>setText(e.target.value)} />}
+          {inputTab === "url" && (
+            <div style={{marginBottom:20}}>
+              <input style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:"8px",padding:"10px 14px",fontSize:"13px",outline:"none",background:"#f8fafc"}} placeholder="https://..." value={url} onChange={e=>setUrl(e.target.value)} />
+              <p style={{fontSize:"12px",color:"#94a3b8",marginTop:4}}>For best results, use PDF upload or paste text.</p>
+            </div>
+          )}
+          {inputTab === "text" && (
+            <textarea style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:"8px",padding:"10px 14px",fontSize:"13px",outline:"none",height:160,resize:"none",marginBottom:20,background:"#f8fafc"}} placeholder="Paste the full TOR or result text here..." value={pasteText} onChange={e=>setPasteText(e.target.value)} />
+          )}
 
           {error && <div style={{marginBottom:12,padding:"8px 12px",borderRadius:"8px",fontSize:"13px",background:"#fff1f2",color:"#be123c",border:"1px solid #fecdd3"}}>{error}</div>}
-          <Btn onClick={handleSubmit} disabled={loading} style={{width:"100%"}}>
-            {loading?"⏳ Extracting with AI...":mode==="result"?"🏆 Extract & Log Result":"↗ Extract & Add Tender"}
+          <Btn onClick={handleSubmit} disabled={loading} fullWidth>
+            {loading ? "⏳ Extracting with AI..." : mode === "result" ? "🏆 Extract & Log Result" : "↗ Extract & Add Tender"}
           </Btn>
         </Modal>
       );
@@ -390,7 +378,6 @@
       const [syncOk, setSyncOk] = useState(null);
 
       const showToast = (msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),4000); };
-
       const login = () => { sessionStorage.setItem("tt_auth","1"); setAuthed(true); };
 
       const loadFromSheet = async () => {
@@ -423,7 +410,7 @@
           try { const r = await callScript({action:"add",row:FIELDS.map(f=>t[f]||"")}); if(r?.success) ok++; } catch {}
         }
         setSyncing(false);
-        showToast(ok>0 ? `✓ ${ok} records synced to Google Sheet.` : "⚠ Sync failed — check connection.", ok>0?"success":"warning");
+        showToast(ok > 0 ? `✓ ${ok} records synced to Google Sheet.` : "⚠ Sync failed.", ok > 0 ? "success" : "warning");
       };
 
       const commitAdd = async (extracted, mode, mergeInto=null) => {
@@ -434,7 +421,7 @@
           saveTenders(next);
           try { await callScript({action:"update",tenderId:mergeInto["Tender ID"],row:FIELDS.map(f=>merged[f]||"")}); } catch {}
           showToast(`✓ Merged into "${mergeInto["Project Title"]||mergeInto["Tender / Procedure Title"]}".`);
-        } else if (mode==="result") {
+        } else if (mode === "result") {
           const record = {"Tender ID":genId(),...extracted,Status:"Awarded"};
           saveTenders([...tenders,record]);
           try { await callScript({action:"add",row:FIELDS.map(f=>record[f]||"")}); } catch {}
@@ -450,7 +437,10 @@
 
       const handleAdd = async (extracted, mode) => {
         let latest = tenders;
-        try { const d=await callScript({action:"getAll"}); if(d?.data?.length>1){const h=d.data[0];latest=d.data.slice(1).map(r=>{const o={};h.forEach((k,i)=>o[k]=r[i]||"");return o;});} } catch {}
+        try {
+          const data = await callScript({action:"getAll"});
+          if (data?.data?.length > 1) { const h=data.data[0]; latest=data.data.slice(1).map(r=>{const o={};h.forEach((k,i)=>o[k]=r[i]||"");return o;}); }
+        } catch {}
         const similar = findSimilar(extracted, latest);
         if (similar) { setMatchPrompt({extracted,match:similar,mode}); setShowAdd(false); }
         else await commitAdd(extracted, mode, null);
@@ -478,17 +468,32 @@
 
       const filtered = tenders.filter(t => {
         const s = !filter || Object.values(t).some(v=>v?.toString().toLowerCase().includes(filter.toLowerCase()));
-        const st = statusFilter==="All" || t["Status"]===statusFilter;
-        return s && st;
+        return s && (statusFilter==="All" || t["Status"]===statusFilter);
       });
 
-      const stats = { total:tenders.length, open:tenders.filter(t=>t.Status==="Open").length, awarded:tenders.filter(t=>t.Status==="Awarded").length, won:tenders.filter(t=>t["Our Bid Status"]==="Won").length };
+      const stats = {
+        total: tenders.length,
+        open: tenders.filter(t=>t.Status==="Open").length,
+        awarded: tenders.filter(t=>t.Status==="Awarded").length,
+        won: tenders.filter(t=>t["Our Bid Status"]==="Won").length
+      };
 
-      if (loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f8fafc"}}><div style={{textAlign:"center"}}><div style={{fontSize:"48px",marginBottom:16}}>📋</div><div style={{fontSize:"14px",color:"#94a3b8"}}>Loading your tender database...</div></div></div>;
+      if (loading) return (
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f8fafc"}}>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontSize:"48px",marginBottom:16}}>📋</div>
+            <div style={{fontSize:"14px",color:"#94a3b8"}}>Loading your tender database...</div>
+          </div>
+        </div>
+      );
 
       return (
         <div style={{minHeight:"100vh",background:"#f8fafc"}}>
-          {toast && <div style={{position:"fixed",top:16,right:16,zIndex:100,padding:"12px 16px",borderRadius:"12px",fontSize:"13px",fontWeight:500,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",background:toast.type==="warning"?"#fffbeb":"#ecfdf5",color:toast.type==="warning"?"#92400e":"#065f46",border:`1px solid ${toast.type==="warning"?"#fde68a":"#a7f3d0"}`}}>{toast.msg}</div>}
+          {toast && (
+            <div style={{position:"fixed",top:16,right:16,zIndex:100,padding:"12px 16px",borderRadius:"12px",fontSize:"13px",fontWeight:500,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",background:toast.type==="warning"?"#fffbeb":"#ecfdf5",color:toast.type==="warning"?"#92400e":"#065f46",border:`1px solid ${toast.type==="warning"?"#fde68a":"#a7f3d0"}`}}>
+              {toast.msg}
+            </div>
+          )}
 
           {matchPrompt && <MatchPrompt extracted={matchPrompt.extracted} match={matchPrompt.match} onConfirm={()=>commitAdd(matchPrompt.extracted,matchPrompt.mode,matchPrompt.match)} onReject={()=>commitAdd(matchPrompt.extracted,matchPrompt.mode,null)} />}
 
@@ -515,7 +520,7 @@
           {/* Stats */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,padding:"20px 24px 8px"}}>
             {[["Total Records",stats.total,"#eef2ff","#4338ca","All"],["Open",stats.open,"#ecfdf5","#065f46","Open"],["Awarded",stats.awarded,"#fffbeb","#92400e","Awarded"],["Won by Us",stats.won,"#f5f3ff","#5b21b6","All"]].map(([label,val,bg,color,sf])=>(
-              <div key={label} onClick={()=>setStatusFilter(sf)} style={{background:bg,borderRadius:"16px",padding:"16px 20px",cursor:"pointer",border:`1px solid ${bg}`}}>
+              <div key={label} onClick={()=>setStatusFilter(sf)} style={{background:bg,borderRadius:"16px",padding:"16px 20px",cursor:"pointer"}}>
                 <div style={{fontSize:"28px",fontWeight:700,color}}>{val}</div>
                 <div style={{fontSize:"12px",color:"#64748b",marginTop:4,fontWeight:500}}>{label}</div>
               </div>
@@ -526,7 +531,7 @@
           <div style={{display:"flex",gap:12,padding:"12px 24px"}}>
             <div style={{flex:1,position:"relative"}}>
               <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:"#94a3b8"}}>🔍</span>
-              <input style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:"10px",padding:"10px 14px 10px 36px",fontSize:"13px",background:"white",outline:"none",boxSizing:"border-box"}} placeholder="Search tenders..." value={filter} onChange={e=>setFilter(e.target.value)} />
+              <input style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:"10px",padding:"10px 14px 10px 36px",fontSize:"13px",background:"white",outline:"none"}} placeholder="Search tenders..." value={filter} onChange={e=>setFilter(e.target.value)} />
             </div>
             <select style={{border:"1px solid #e2e8f0",borderRadius:"10px",padding:"10px 14px",fontSize:"13px",background:"white",outline:"none",color:"#475569"}} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
               {["All","Open","Closed","Awarded"].map(s=><option key={s} value={s}>{s==="All"?"All Status":s}</option>)}
@@ -536,7 +541,7 @@
           {/* Table */}
           <div style={{padding:"0 24px 40px"}}>
             <div style={{background:"white",borderRadius:"16px",border:"1px solid #f1f5f9",overflow:"hidden",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
-              {filtered.length===0
+              {filtered.length === 0
                 ? <div style={{textAlign:"center",padding:"80px 0"}}><div style={{fontSize:"40px",marginBottom:12}}>📂</div><div style={{fontSize:"13px",color:"#94a3b8"}}>{tenders.length===0?"No records yet — add your first TOR":"No results match your filter"}</div></div>
                 : <div style={{overflowX:"auto"}}>
                     <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
@@ -552,12 +557,13 @@
                         {filtered.map((t,idx)=>{
                           const proj=t["Project Title"]; const proc=t["Tender / Procedure Title"];
                           return (
-                            <tr key={t["Tender ID"]} onClick={()=>setSelected(t)} style={{borderBottom:"1px solid #f8fafc",cursor:"pointer",background:idx%2===0?"white":"#fafbff"}}
+                            <tr key={t["Tender ID"]} onClick={()=>setSelected(t)}
+                              style={{borderBottom:"1px solid #f8fafc",cursor:"pointer",background:idx%2===0?"white":"#fafbff"}}
                               onMouseEnter={e=>e.currentTarget.style.background="#eef2ff"}
                               onMouseLeave={e=>e.currentTarget.style.background=idx%2===0?"white":"#fafbff"}>
                               <td style={{padding:"12px 16px",color:"#cbd5e1",fontSize:"11px",fontFamily:"monospace"}}>{t["Tender ID"]}</td>
                               <td style={{padding:"12px 16px",maxWidth:"220px"}}>
-                                <div style={{fontWeight:600,color:"#1e293b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{proj||proc||<span style={{color:"#cbd5e1"}}>—</span>}</div>
+                                <div style={{fontWeight:600,color:"#1e293b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{proj||proc||"—"}</div>
                                 {proc&&proc!==proj&&<div style={{fontSize:"12px",color:"#6366f1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2}}>{proc}</div>}
                               </td>
                               <td style={{padding:"12px 16px",color:"#64748b",whiteSpace:"nowrap"}}>{t["Donor / Client"]||"—"}</td>
