@@ -51,7 +51,9 @@
       for (const [k, v] of Object.entries(payload)) {
         url.searchParams.set(k, Array.isArray(v) ? JSON.stringify(v) : String(v));
       }
-      const res = await fetch(url.toString());
+      // Route through CORS proxy to allow cross-origin requests from GitHub Pages
+      const proxyUrl = "https://corsproxy.io/?" + encodeURIComponent(url.toString());
+      const res = await fetch(proxyUrl);
       return res.json();
     };
 
