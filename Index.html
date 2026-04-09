@@ -302,24 +302,39 @@
       const handleSubmit = async () => {
         setLoading(true); setError(null);
         try {
-          const sys = mode==="tor"
-            ? `Extract tender data from TOR. Return ONLY valid JSON, no markdown. Keys (null if missing): ${FIELDS.filter(f=>f!=="Tender ID").join(", ")}. Set Status="Open", Our Bid Status="Bidding".`
-            : `Extract data from award notice. Return ONLY valid JSON, no markdown. Keys: ${FIELDS.filter(f=>f!=="Tender ID").join(", ")}. Set Status="Awarded".`;
-          let messages;
-          if (inputTab==="pdf" && files.length>0) {
-            const blocks = await Promise.all(files.map(async f=>({type:"document",source:{type:"base64",media_type:"application/pdf",data:await readFileAsBase64(f)}})));
-            messages = [{role:"user",content:[...blocks,{type:"text",text:`Extract and merge from all ${files.length} doc(s). Return one JSON.`}]}];
-          } else if (inputTab==="url" && url) {
-            messages = [{role:"user",content:`Extract tender data from: ${url}\nReturn JSON.`}];
-          } else if (inputTab==="text" && text) {
-            messages = [{role:"user",content:`Extract tender data:\n\n${text}\n\nReturn JSON.`}];
-          } else { setError("Please provide a PDF, URL, or paste text."); setLoading(false); return; }
+          let extractedText = "";
 
-          const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:sys,messages})});
-          if (!res.ok) throw new Error(`API error: ${res.status}`);
+          if (inputTab==="pdf" && files.length>0) {
+            // Read all PDFs as text using FileReader
+            const texts = await Promise.all(files.map(f => new Promise((res, rej) => {
+              const r = new FileReader();
+              r.onload = () => res(`[Document: ${f.name}]\n${r.result}`);
+              r.onerror = rej;
+              r.readAsText(f);
+            })));
+            extractedText = texts.join("\n\n");
+            if (!extractedText.trim()) throw new Error("Could not read PDF text. Try the Paste Text option instead.");
+          } else if (inputTab==="url" && url) {
+            extractedText = `Extract tender data from this URL: ${url}`;
+          } else if (inputTab==="text" && text) {
+            extractedText = text;
+          } else {
+            setError("Please provide a PDF, URL, or paste text.");
+            setLoading(false); return;
+          }
+
+          // Route extraction through Apps Script to avoid CORS
+          const params = new URLSearchParams({
+            secret: SECRET_KEY,
+            action: "extract",
+            text: extractedText.substring(0, 8000), // limit size
+            isResult: String(mode === "result")
+          });
+          const res = await fetch(`${SCRIPT_URL}?${params.toString()}`);
+          if (!res.ok) throw new Error(`Script error: ${res.status}`);
           const d = await res.json();
-          const t = d.content?.find(b=>b.type==="text")?.text||"{}";
-          onAdd(JSON.parse(t.replace(/```json|```/g,"").trim()), mode);
+          if (d.error) throw new Error(d.error);
+          onAdd(d.extracted, mode);
         } catch(e) { setError(`Error: ${e.message}`); }
         setLoading(false);
       };
